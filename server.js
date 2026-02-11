@@ -187,8 +187,12 @@ app.post("/refresh-auth0-token", async (req, res) => {
 });
 
 /* =========================================================
-   VERIFY AUTH0 ACCESS TOKEN
+   VERIFY AUTH0/AZURE(SSO) ACCESS TOKEN
 ========================================================= */
+
+const azureJwksClient = jwksClient({
+  jwksUri: "https://login.microsoftonline.com/common/discovery/v2.0/keys",
+});
 
 const client = jwksClient({
   jwksUri: `https://${process.env.AUTH0_DOMAIN}/.well-known/jwks.json`,
@@ -202,23 +206,71 @@ function getKey(header, callback) {
 
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
-
   if (!token) return res.status(401).json({ error: "Missing token" });
 
-  jwt.verify(
-    token,
-    getKey,
-    {
-      audience: process.env.AUTH0_AUDIENCE || process.env.AUTH0_CLIENT_ID,
-      issuer: `https://${process.env.AUTH0_DOMAIN}/`,
-      algorithms: ["RS256"],
-    },
-    (err, decoded) => {
-      if (err) return res.status(401).json({ error: "Invalid token" });
-      req.user = decoded;
-      next();
-    },
-  );
+  const decoded = jwt.decode(token, { complete: true });
+  if (!decoded || !decoded.payload) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+
+  const issuer = decoded.payload.iss;
+
+  // Azure Token
+  if (issuer?.includes("login.microsoftonline.com")) {
+    return jwt.verify(
+      token,
+      (header, callback) => {
+        azureJwksClient.getSigningKey(header.kid, (err, key) => {
+          callback(null, key.getPublicKey());
+        });
+      },
+      {
+        audience: `api://${process.env.AZURE_CLIENT_ID}`,
+        algorithms: ["RS256"],
+      },
+      (err, verified) => {
+        if (err) return res.status(401).json({ error: "Invalid Azure token" });
+
+        req.user = {
+          provider: "azure",
+          oid: verified.oid,
+          tid: verified.tid,
+          email: verified.preferred_username,
+        };
+
+        next();
+      },
+    );
+  }
+
+  // Auth0 Token
+  if (issuer?.includes(process.env.AUTH0_DOMAIN)) {
+    return jwt.verify(
+      token,
+      (header, callback) => {
+        client.getSigningKey(header.kid, (err, key) => {
+          callback(null, key.getPublicKey());
+        });
+      },
+      {
+        audience: process.env.AUTH0_AUDIENCE || process.env.AUTH0_CLIENT_ID,
+        issuer: `https://${process.env.AUTH0_DOMAIN}/`,
+        algorithms: ["RS256"],
+      },
+      (err, verified) => {
+        if (err) return res.status(401).json({ error: "Invalid Auth0 token" });
+
+        req.user = {
+          provider: "auth0",
+          ...verified,
+        };
+
+        next();
+      },
+    );
+  }
+
+  return res.status(401).json({ error: "Unknown token issuer" });
 }
 
 /* =========================================================
