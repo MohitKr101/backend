@@ -217,7 +217,11 @@ function verifyToken(req, res, next) {
   console.log("Decoded issuer:", issuer);
 
   // Azure Token
-  if (issuer && issuer.startsWith("https://login.microsoftonline.com/")) {
+  if (
+    issuer &&
+    (issuer.startsWith("https://login.microsoftonline.com/") ||
+      issuer.startsWith("https://sts.windows.net/"))
+  ) {
     return jwt.verify(
       token,
       (header, callback) => {
@@ -239,7 +243,8 @@ function verifyToken(req, res, next) {
           provider: "azure",
           oid: verified.oid,
           tid: verified.tid,
-          email: verified.preferred_username,
+          email:
+            verified.preferred_username || verified.upn || verified.unique_name,
         };
 
         next();
