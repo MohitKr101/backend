@@ -33,6 +33,7 @@ app.get("/auth-start", (req, res) => {
     redirect_uri: `${API_BASE_URL}/auth-callback`,
     scope: "openid profile email offline_access",
     connection: "azuread", // Force Azure Enterprise login
+    prompt: "none",
   });
 
   if (AUTH0_AUDIENCE) {
