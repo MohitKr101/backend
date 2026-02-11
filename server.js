@@ -222,6 +222,33 @@ function verifyToken(req, res, next) {
 }
 
 /* =========================================================
+   LOGOUT from AUTH0
+========================================================= */
+app.get("/logout-start", (req, res) => {
+  const { AUTH0_DOMAIN, AUTH0_CLIENT_ID, API_BASE_URL } = process.env;
+
+  const params = new URLSearchParams({
+    client_id: AUTH0_CLIENT_ID,
+    returnTo: `${API_BASE_URL}/logout-callback`,
+  });
+
+  const logoutUrl = `https://${AUTH0_DOMAIN}/v2/logout?${params.toString()}`;
+  res.redirect(logoutUrl);
+});
+
+app.get("/logout-callback", (req, res) => {
+  res.setHeader("Content-Type", "text/html");
+  res.end(`
+    <script src="https://res.cdn.office.net/teams-js/2.40.0/js/MicrosoftTeams.min.js"></script>
+    <script>
+      microsoftTeams.app.initialize().then(() => {
+        microsoftTeams.authentication.notifySuccess("logout-success");
+      });
+    </script>
+  `);
+});
+
+/* =========================================================
    SAMPLE PROTECTED API
 ========================================================= */
 
