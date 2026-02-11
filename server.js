@@ -4,28 +4,13 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const jwksClient = require("jwks-rsa");
 const path = require("path");
-const PORT = process.env.PORT || 3978;
 
+const PORT = process.env.PORT || 3978;
 const app = express();
 
-app.use((req, res, next) => {
-  res.setHeader("ngrok-skip-browser-warning", "true");
-  next();
-});
+/* ------------------- MIDDLEWARE ------------------- */
 
-app.use(express.static(path.join(__dirname, "dist")));
-
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
-});
-
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  }),
-);
-
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 /* ------------------- AUTH START ------------------- */
@@ -113,6 +98,14 @@ app.get("/api/profile", verifyToken, (req, res) => {
     message: "Token Valid",
     user: req.user,
   });
+});
+
+/* ------------------- STATIC + SPA FALLBACK (LAST) ------------------- */
+
+app.use(express.static(path.join(__dirname, "dist")));
+
+app.use((req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, () => {
