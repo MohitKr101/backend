@@ -214,9 +214,10 @@ function verifyToken(req, res, next) {
   }
 
   const issuer = decoded.payload.iss;
+  console.log("Decoded issuer:", issuer);
 
   // Azure Token
-  if (issuer?.includes("login.microsoftonline.com")) {
+  if (issuer && issuer.startsWith("https://login.microsoftonline.com/")) {
     return jwt.verify(
       token,
       (header, callback) => {
@@ -225,11 +226,14 @@ function verifyToken(req, res, next) {
         });
       },
       {
-        audience: `api://${process.env.AZURE_CLIENT_ID}`,
+        audience: process.env.AZURE_AUDIENCE,
         algorithms: ["RS256"],
       },
       (err, verified) => {
-        if (err) return res.status(401).json({ error: "Invalid Azure token" });
+        if (err) {
+          console.error("Azure verify error:", err);
+          return res.status(401).json({ error: "Invalid Azure token" });
+        }
 
         req.user = {
           provider: "azure",
