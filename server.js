@@ -5,64 +5,190 @@ const jwt = require("jsonwebtoken");
 const jwksClient = require("jwks-rsa");
 const path = require("path");
 
-const PORT = process.env.PORT || 3978;
 const app = express();
+const PORT = process.env.PORT || 3978;
 
-/* ------------------- MIDDLEWARE ------------------- */
+/* =========================================================
+   MIDDLEWARE
+========================================================= */
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
-/* ------------------- AUTH START ------------------- */
+/* =========================================================
+   AUTH START → Redirect to Auth0
+========================================================= */
 
 app.get("/auth-start", (req, res) => {
-  const redirectUri = `https://${req.headers.host}/auth-callback`;
+  const { AUTH0_CLIENT_ID, AUTH0_AUDIENCE, AUTH0_DOMAIN, API_BASE_URL } =
+    process.env;
 
-  const url =
-    `https://${process.env.AUTH0_DOMAIN}/authorize` +
-    `?response_type=code` +
-    `&client_id=${process.env.AUTH0_CLIENT_ID}` +
-    `&redirect_uri=${redirectUri}` +
-    `&scope=openid profile email offline_access` +
-    `&connection=azuread`;
+  if (!AUTH0_CLIENT_ID || !AUTH0_DOMAIN || !API_BASE_URL) {
+    return res.status(500).send("Missing Auth0 environment variables");
+  }
 
-  res.redirect(url);
+  const params = new URLSearchParams({
+    client_id: AUTH0_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: `${API_BASE_URL}/auth-callback`,
+    scope: "openid profile email offline_access",
+    connection: "azuread", // Force Azure Enterprise login
+  });
+
+  if (AUTH0_AUDIENCE) {
+    params.append("audience", AUTH0_AUDIENCE);
+  }
+
+  const authUrl = `https://${AUTH0_DOMAIN}/authorize?${params.toString()}`;
+  return res.redirect(authUrl);
 });
 
-/* ------------------- AUTH CALLBACK ------------------- */
+/* =========================================================
+   AUTH CALLBACK → Return code to Teams popup
+========================================================= */
 
-app.get("/auth-callback", async (req, res) => {
-  const { code } = req.query;
+app.get("/auth-callback", (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : null;
 
-  const tokenRes = await fetch(
-    `https://${process.env.AUTH0_DOMAIN}/oauth/token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        client_id: process.env.AUTH0_CLIENT_ID,
-        client_secret: process.env.AUTH0_CLIENT_SECRET,
-        code,
-        redirect_uri: `https://${req.headers.host}/auth-callback`,
-      }),
-    },
-  );
+  if (!code) return res.status(400).send("Missing code");
 
-  const tokenData = await tokenRes.json();
+  res.setHeader("Content-Type", "text/html");
 
-  res.send(`
+  return res.end(`
+    <script src="https://res.cdn.office.net/teams-js/2.40.0/js/MicrosoftTeams.min.js"></script>
     <script>
-      window.opener.postMessage(
-        { type: "AUTH_SUCCESS", token: ${JSON.stringify(tokenData)} },
-        "*"
-      );
-      window.close();
+      microsoftTeams.app.initialize().then(() => {
+        microsoftTeams.authentication.notifySuccess("${code}");
+      });
     </script>
   `);
 });
 
-/* ------------------- VERIFY TOKEN ------------------- */
+/* =========================================================
+   EXCHANGE AUTH0 TOKEN (Backend secure exchange)
+========================================================= */
+
+app.post("/exchange-auth0-token", async (req, res) => {
+  try {
+    const code = typeof req.body?.code === "string" ? req.body.code : null;
+
+    if (!code) {
+      return res.status(400).json({ error: "Missing code" });
+    }
+
+    const {
+      AUTH0_CLIENT_ID,
+      AUTH0_CLIENT_SECRET,
+      AUTH0_DOMAIN,
+      AUTH0_AUDIENCE,
+      API_BASE_URL,
+    } = process.env;
+
+    if (
+      !AUTH0_CLIENT_ID ||
+      !AUTH0_CLIENT_SECRET ||
+      !AUTH0_DOMAIN ||
+      !API_BASE_URL
+    ) {
+      return res
+        .status(500)
+        .json({ error: "Missing Auth0 environment variables" });
+    }
+
+    const payload = {
+      grant_type: "authorization_code",
+      client_id: AUTH0_CLIENT_ID,
+      client_secret: AUTH0_CLIENT_SECRET,
+      code,
+      redirect_uri: `${API_BASE_URL}/auth-callback`,
+    };
+
+    if (AUTH0_AUDIENCE) {
+      payload.audience = AUTH0_AUDIENCE;
+    }
+
+    const tokenRes = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const tokenData = await tokenRes.json();
+
+    if (!tokenRes.ok) {
+      console.error("Token exchange failed:", tokenData);
+      return res.status(500).json({ error: "Token exchange failed" });
+    }
+
+    return res.json(tokenData);
+  } catch (err) {
+    console.error("Exchange token error:", err);
+    return res.status(500).json({ error: "Token exchange failed" });
+  }
+});
+
+/* =========================================================
+   REFRESH TOKEN
+========================================================= */
+
+app.post("/refresh-auth0-token", async (req, res) => {
+  try {
+    const refreshToken =
+      typeof req.body?.refresh_token === "string"
+        ? req.body.refresh_token
+        : null;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: "Missing refresh_token" });
+    }
+
+    const {
+      AUTH0_CLIENT_ID,
+      AUTH0_CLIENT_SECRET,
+      AUTH0_DOMAIN,
+      AUTH0_AUDIENCE,
+    } = process.env;
+
+    if (!AUTH0_CLIENT_ID || !AUTH0_CLIENT_SECRET || !AUTH0_DOMAIN) {
+      return res
+        .status(500)
+        .json({ error: "Missing Auth0 environment variables" });
+    }
+
+    const payload = {
+      grant_type: "refresh_token",
+      client_id: AUTH0_CLIENT_ID,
+      client_secret: AUTH0_CLIENT_SECRET,
+      refresh_token: refreshToken,
+    };
+
+    if (AUTH0_AUDIENCE) {
+      payload.audience = AUTH0_AUDIENCE;
+    }
+
+    const tokenRes = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const tokenData = await tokenRes.json();
+
+    if (!tokenRes.ok) {
+      console.error("Refresh failed:", tokenData);
+      return res.status(500).json({ error: "Refresh failed" });
+    }
+
+    return res.json(tokenData);
+  } catch (err) {
+    console.error("Refresh token error:", err);
+    return res.status(500).json({ error: "Refresh failed" });
+  }
+});
+
+/* =========================================================
+   VERIFY AUTH0 ACCESS TOKEN
+========================================================= */
 
 const client = jwksClient({
   jwksUri: `https://${process.env.AUTH0_DOMAIN}/.well-known/jwks.json`,
@@ -77,11 +203,13 @@ function getKey(header, callback) {
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
 
+  if (!token) return res.status(401).json({ error: "Missing token" });
+
   jwt.verify(
     token,
     getKey,
     {
-      audience: process.env.AUTH0_CLIENT_ID,
+      audience: process.env.AUTH0_AUDIENCE || process.env.AUTH0_CLIENT_ID,
       issuer: `https://${process.env.AUTH0_DOMAIN}/`,
       algorithms: ["RS256"],
     },
@@ -93,14 +221,20 @@ function verifyToken(req, res, next) {
   );
 }
 
+/* =========================================================
+   SAMPLE PROTECTED API
+========================================================= */
+
 app.get("/api/profile", verifyToken, (req, res) => {
   res.json({
-    message: "Token Valid",
+    message: "Token valid",
     user: req.user,
   });
 });
 
-/* ------------------- STATIC + SPA FALLBACK (LAST) ------------------- */
+/* =========================================================
+   STATIC REACT APP (MUST BE LAST)
+========================================================= */
 
 app.use(express.static(path.join(__dirname, "dist")));
 
@@ -108,6 +242,8 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
+/* ========================================================= */
+
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
