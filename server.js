@@ -23,17 +23,19 @@ app.get("/auth-start", (req, res) => {
   const { AUTH0_CLIENT_ID, AUTH0_AUDIENCE, AUTH0_DOMAIN, API_BASE_URL } =
     process.env;
 
-  if (!AUTH0_CLIENT_ID || !AUTH0_DOMAIN || !API_BASE_URL) {
-    return res.status(500).send("Missing Auth0 environment variables");
-  }
+  const retry = req.query.retry === "true";
 
   const params = new URLSearchParams({
     client_id: AUTH0_CLIENT_ID,
     response_type: "code",
     redirect_uri: `${API_BASE_URL}/auth-callback`,
     scope: "openid profile email offline_access",
-    connection: "azuread", // Force Azure Enterprise login
   });
+
+  // Only force Azure if not retry
+  if (!retry) {
+    params.append("connection", "azuread");
+  }
 
   if (AUTH0_AUDIENCE) {
     params.append("audience", AUTH0_AUDIENCE);
@@ -48,9 +50,17 @@ app.get("/auth-start", (req, res) => {
 ========================================================= */
 
 app.get("/auth-callback", (req, res) => {
-  const code = typeof req.query.code === "string" ? req.query.code : null;
+  const { code, error } = req.query;
 
-  if (!code) return res.status(400).send("Missing code");
+  // If Azure failed → retry without forcing connection
+  if (error) {
+    console.log("Azure failed, retrying without connection...");
+    return res.redirect("/auth-start?retry=true");
+  }
+
+  if (!code) {
+    return res.status(400).send("Missing authorization code");
+  }
 
   res.setHeader("Content-Type", "text/html");
 
