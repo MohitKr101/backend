@@ -106,7 +106,7 @@ app.post("/notify-user", async (req, res) => {
     // Send one activity per notification (simple + matches your data model)
     // You can also batch later using Graph bulk recipients if needed. :contentReference[oaicite:4]{index=4}
     for (const n of notifications) {
-      if (!n?.title || !n?.id) continue;
+      if (!n?.title || !n?.url) continue;
       await sendActivityNotificationToUser({
         userIdOrUpn: user,
         title: n.title,
@@ -127,6 +127,42 @@ app.post("/notify-user", async (req, res) => {
       status: err?.response?.status,
       data: err?.response?.data,
     });
+  }
+});
+
+app.get("/api/resolve-notification", async (req, res) => {
+  try {
+    const { id } = req.query;
+
+    if (!id) {
+      return res.status(400).json({ error: "Missing notification id" });
+    }
+
+    console.log("Resolving notification id:", id);
+
+    // 🔹 Call your existing notifications API
+    // Replace this with your real internal endpoint
+    const response = await axios.get(
+      `${process.env.NOTIFICATIONS_API_BASE}/notifications`,
+      {
+        headers: {
+          Authorization: `Bearer ${req.headers.authorization || ""}`,
+        },
+      },
+    );
+
+    const notifications = response.data?.notifications || [];
+
+    const notification = notifications.find((n) => String(n.id) === String(id));
+
+    if (!notification || !notification.url) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
+
+    res.json({ url: notification.url });
+  } catch (err) {
+    console.error("Resolve notification failed:", err?.response?.data || err);
+    res.status(500).json({ error: "Failed to resolve notification" });
   }
 });
 
