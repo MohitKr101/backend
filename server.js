@@ -3,8 +3,16 @@ import axios from "axios";
 import "dotenv/config";
 import { ClientSecretCredential } from "@azure/identity";
 
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 app.use(express.json());
+// Serve frontend build
+app.use(express.static(path.join(__dirname, "dist")));
 
 const {
   AZURE_TENANT_ID,
@@ -120,6 +128,11 @@ app.post("/notify-user", async (req, res) => {
       data: err?.response?.data,
     });
   }
+});
+
+// SPA fallback (important for React Router)
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, () => {
