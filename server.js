@@ -106,7 +106,7 @@ app.post("/notify-user", async (req, res) => {
     // Send one activity per notification (simple + matches your data model)
     // You can also batch later using Graph bulk recipients if needed. :contentReference[oaicite:4]{index=4}
     for (const n of notifications) {
-      if (!n?.title || !n?.url) continue;
+      if (!n?.title || !n?.id) continue;
       await sendActivityNotificationToUser({
         userIdOrUpn: user,
         title: n.title,
